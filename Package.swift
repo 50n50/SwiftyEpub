@@ -11,11 +11,20 @@ let package = Package(
             name: "SwiftyEpub",
             targets: ["SwiftyEpub"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/weichsel/ZIPFoundation.git", .upToNextMajor(from: "0.9.0")),
+        .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0")
+    ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "SwiftyEpub"),
+            name: "SwiftyEpub",
+            dependencies: [
+                "ZIPFoundation",
+                "SwiftSoup"
+            ]
+        ),
         .testTarget(
             name: "SwiftyEpubTests",
             dependencies: ["SwiftyEpub"]),
