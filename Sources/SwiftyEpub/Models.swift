@@ -12,6 +12,22 @@ public struct Package {
     public var manifest: Manifest
     public var spine: Spine
     public var guide: Guide
+    public var navElement: NavElement
+}
+
+public struct NavElement {
+    public var href: String
+}
+
+public struct ChapterPageCount {
+    public var chapterName: String
+    public var count: Double
+}
+
+public struct NavItem {
+    public var href: String
+    public var id: String
+    public var text: String
 }
 
 public struct Metadata {

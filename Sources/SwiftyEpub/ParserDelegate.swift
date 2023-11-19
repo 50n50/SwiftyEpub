@@ -27,10 +27,13 @@ class ParserDelegate: NSObject, XMLParserDelegate {
     }
 
     func parserDidStartDocument(_ parser: XMLParser) {
-        package = Package(metadata: Metadata(title: "", creator: "", publisher: "", date: "", rights: "", source: "", identifier: "", language: "", description: "", format: ""),
-                          manifest: Manifest(items: []),
-                          spine: Spine(toc: "", items: []),
-                          guide: Guide(references: []))
+        package = Package(
+            metadata: Metadata(title: "", creator: "", publisher: "", date: "", rights: "", source: "", identifier: "", language: "", description: "", format: ""),
+            manifest: Manifest(items: []),
+            spine: Spine(toc: "", items: []),
+            guide: Guide(references: []),
+            navElement: NavElement(href: "")
+        )
         
         currentMetadata = Metadata(title: "", creator: "", publisher: "", date: "", rights: "", source: "", identifier: "", language: "", description: "", format: "")
     }
@@ -54,9 +57,17 @@ class ParserDelegate: NSObject, XMLParserDelegate {
             let id = attributeDict["id"]
             let href = attributeDict["href"]
             let mediaType = attributeDict["media-type"]
-            currentManifestItem = ManifestItem(href: href ?? "", id: id ?? "", mediaType: mediaType ?? "", properties: attributeDict["properties"])
+            let properties = attributeDict["properties"]
+            
+            currentManifestItem = ManifestItem(href: href ?? "", id: id ?? "", mediaType: mediaType ?? "", properties: properties ?? "")
             if currentManifest != nil {
                 if let item = currentManifestItem {
+                    if item.properties == "nav" {
+                        if package != nil {
+                            package!.navElement = NavElement(href: item.href)
+                        }
+                    }
+                    
                     currentManifest!.items.append(item)
                 }
             }
@@ -66,7 +77,7 @@ class ParserDelegate: NSObject, XMLParserDelegate {
         case "itemref":
             let idRef = attributeDict["idref"]
             let linear = attributeDict["linear"]
-            currentSpineItem = SpineItem(idRef: idRef ?? "", linear: linear ?? "")
+            currentSpineItem = SpineItem(idRef: idRef ?? "", linear: linear ?? "yes")
         case "guide":
             currentGuide = Guide(references: [])
         case "reference":

@@ -4,6 +4,8 @@
 import Foundation
 import ZIPFoundation
 import SwiftSoup
+import WebKit
+import UIKit
 
 extension String {
     func stringByRemovingHTMLTags() -> String {
@@ -15,7 +17,12 @@ public struct SwiftyEpub {
     public var metadata: Metadata? = nil
     public var spine: Spine? = nil
     public var manifest: Manifest? = nil
+    public var navElement: NavElement? = nil
     public var parsedSpines: [ParsedSpine] = []
+    public var navItems: [NavItem] = []
+    public var pageCount: Int = 0
+    public var hiddenPageCount: Int = 0
+    public var chapterPageCounts: [ChapterPageCount] = []
     
     public init() {}
 
@@ -49,6 +56,66 @@ public struct SwiftyEpub {
         return nil
     }
     
+    func numberOfLines(for text: String, fontSize: Double, containerWidth: CGFloat) -> Int {
+        let font = UIFont.systemFont(ofSize: CGFloat(fontSize))
+        let textAttributes = [NSAttributedString.Key.font: font]
+        let attributedText = NSAttributedString(string: text, attributes: textAttributes)
+        
+        let textRect = attributedText.boundingRect(with: CGSize(width: containerWidth, height: CGFloat.greatestFiniteMagnitude), options: .usesLineFragmentOrigin, context: nil)
+        
+        let numberOfLines = Int(ceil(textRect.size.height / font.lineHeight))
+        
+        return numberOfLines
+    }
+    
+    
+    func countEmptyLines(in htmlString: String) -> Int {
+        let pattern = #"^\s*$"#
+        let regex = try! NSRegularExpression(pattern: pattern, options: .anchorsMatchLines)
+        let range = NSRange(htmlString.startIndex..<htmlString.endIndex, in: htmlString)
+        
+        let matches = regex.matches(in: htmlString, options: [], range: range)
+        return matches.count
+    }
+    
+    func calculateContentHeight(htmlString: String, cssString: String, completion: @escaping (CGFloat) -> Void) {
+        DispatchQueue.main.async {
+            let webView = WKWebView(frame: .zero)
+            webView.translatesAutoresizingMaskIntoConstraints = false
+
+            let htmlWithStyle = "<html><head><style>\(cssString)</style></head><body>\(htmlString)</body></html>"
+            webView.loadHTMLString(htmlWithStyle, baseURL: nil)
+            
+            webView.scrollView.isScrollEnabled = false
+            webView.scrollView.bounces = false
+
+            UIApplication.shared.windows.first { $0.isKeyWindow }?.addSubview(webView)
+
+            webView.evaluateJavaScript("document.readyState", completionHandler: { _, _ in
+                webView.evaluateJavaScript("document.body.scrollHeight", completionHandler: { result, error in
+                    if let height = result as? CGFloat {
+                        DispatchQueue.main.async {
+                            webView.removeFromSuperview()
+                            completion(height)
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            print("Failed to get content height: \(error?.localizedDescription ?? "Unknown error")")
+                            webView.removeFromSuperview()
+                            completion(0)
+                        }
+                    }
+                })
+            })
+        }
+    }
+    
+    /// Read and parse epub file.
+    ///
+    /// - Parameters:
+    ///     - atPath: Path of epub file
+    /// - Returns: Nothing
+    /// - Throws: Nothing
     public mutating func parseEpub(atPath path: String) {
         let fileManager = FileManager.default
         
@@ -148,6 +215,7 @@ public struct SwiftyEpub {
                 metadata = parsedPackage.metadata
                 spine = parsedPackage.spine
                 manifest = parsedPackage.manifest
+                navElement = parsedPackage.navElement
                 
                 // parse the html of the first html file
                 if let manifest {
@@ -177,14 +245,56 @@ public struct SwiftyEpub {
                     }
                     
                     
+                    // parse Table of contents
+                    if let nav = navElement {
+                        let opsFolder = version == 3 ? epubFolderPath.appendingPathComponent(folderName) : epubFolderPath
+                        
+                        let htmlContent = try String(contentsOfFile: opsFolder.appendingPathComponent(nav.href).absoluteString.replacingOccurrences(of: "file://", with: ""), encoding: .utf8)
+                        
+                        do {
+                            let doc: Document = try SwiftSoup.parse(htmlContent)
+                            
+                            let elements: Elements? = try doc.body()?.select("li")
+                            
+                            if let elements {
+                                for element in elements {
+                                    var href = ""
+                                    let id = try element.attr("id")
+                                    let text = try element.text()
+                                    if let link = try element.select("a").first() {
+                                        href = try link.attr("href")
+                                    }
+                                    
+                                    navItems.append(NavItem(href: href, id: id, text: text))
+                                }
+                            }
+                        } catch {
+                            print("\(error.localizedDescription)")
+                        }
+                        
+                    }
+                    
+                    
                     let htmlArray = manifest.items.filter { element in
                         element.mediaType.contains("html")
                     }
                     
                     var parsedHtmlHrefs: [String] = []
                     
+                    var pageCount: Double = 0
+                    
+                    let metrics = UIFontMetrics.default
+                    let font = UIFont.systemFont(ofSize: 16)
+                    let lineHeight = metrics.scaledValue(for: font.lineHeight)
+                    let leading = metrics.scaledValue(for: font.leading)
+                    
+                    let maxWidth: CGFloat = UIScreen.main.bounds.width - 40
+                    
                     for html in htmlArray {
                         if !parsedHtmlHrefs.contains(html.href) {
+                            
+                            var size: Double = 0
+                            
                             // Read HTML content from the local file
                             let opsFolder = version == 3 ? epubFolderPath.appendingPathComponent(folderName) : epubFolderPath
                             
@@ -256,7 +366,13 @@ public struct SwiftyEpub {
                                                 }
                                             }
                                             
-                                            let h2Tag = Tag(type: .h2, value: try element.text(), fontSize: fontSize, margin: margin, align: align)
+                                            let text = try element.text()
+
+                                            let lines = numberOfLines(for: text, fontSize: fontSize, containerWidth: maxWidth)
+                                            
+                                            size += (fontSize * Double(lines)) + margin.top + margin.bottom
+                                            
+                                            let h2Tag = Tag(type: .h2, value: text, fontSize: fontSize, margin: margin, align: align)
                                             list.append(h2Tag)
                                             continue
                                         }
@@ -311,13 +427,20 @@ public struct SwiftyEpub {
                                                 }
                                             }
                                             
-                                            let h4Tag = Tag(type: .h4, value: try element.text(), fontSize: fontSize, margin: margin, align: align)
+                                            let text = try element.text()
+
+                                            let lines = numberOfLines(for: text, fontSize: fontSize, containerWidth: maxWidth)
+                                            
+                                            size += (fontSize * Double(lines)) + margin.top + margin.bottom
+                                            
+                                            let h4Tag = Tag(type: .h4, value: text, fontSize: fontSize, margin: margin, align: align)
                                             list.append(h4Tag)
                                             continue
                                         }
                                         
                                         // Check if the element is an <h2> tag
                                         if element.tagName() == "li" {
+                                            size += 15
                                             let liTag = Tag(type: .li, value: try element.text())
                                             list.append(liTag)
                                             continue
@@ -325,7 +448,25 @@ public struct SwiftyEpub {
                                         
                                         // Check if the element is an <h2> tag
                                         if element.tagName() == "img" {
-                                            let imgTag = Tag(type: .img, value: try element.attr("src").replacingOccurrences(of: "../", with: ""))
+                                            let src = try element.attr("src").replacingOccurrences(of: "../", with: "")
+                                            let imgPath = opsFolder.appendingPathComponent(src)
+                                            
+                                            if let image = UIImage(contentsOfFile: imgPath.absoluteString.replacingOccurrences(of: "file://", with: "")) {
+                                                let originalWidth = image.size.width
+                                                let originalHeight = image.size.height
+                                                
+                                                let givenWidth = UIScreen.main.bounds.width - 40
+                                                
+                                                let aspectRatio = originalHeight / originalWidth
+                                                let calculatedHeight = givenWidth * aspectRatio
+                                                
+                                                size += calculatedHeight
+                                                print(calculatedHeight)
+                                            } else {
+                                                print("Image couldn't be loaded.")
+                                            }
+                                            
+                                            let imgTag = Tag(type: .img, value: src)
                                             list.append(imgTag)
                                             continue
                                         }
@@ -392,6 +533,9 @@ public struct SwiftyEpub {
                                                 }
                                             }
                                             
+                                            let lines = numberOfLines(for: str, fontSize: fontSize, containerWidth: maxWidth)
+                                            
+                                            size += (fontSize * Double(lines)) + margin.top + margin.bottom
                                             
                                             let pTag = Tag(type: .p, value: str, fontSize: fontSize, margin: margin, align: align)
                                             list.append(pTag)
@@ -405,8 +549,21 @@ public struct SwiftyEpub {
                             } catch {
                                 print("Error parsing HTML: \(error)")
                             }
+                            
+                            size += Double(countEmptyLines(in: htmlContent)) * 16.0
+                            
+                            chapterPageCounts.append(
+                                ChapterPageCount(
+                                    chapterName: html.href,
+                                    count: max(UIScreen.main.bounds.height, size) / UIScreen.main.bounds.height
+                                )
+                            )
+                            
+                            pageCount += max(UIScreen.main.bounds.height, size)
                         }
                     }
+                    
+                    self.pageCount = Int(pageCount / UIScreen.main.bounds.height)
                 }
             } else {
                 print("Parsing failed.")
