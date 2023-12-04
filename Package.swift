@@ -17,7 +17,8 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", .upToNextMajor(from: "0.9.0")),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
-        .package(url: "https://github.com/tadija/AEXML.git", from: "4.6.1")
+        .package(url: "https://github.com/tadija/AEXML.git", from: "4.6.1"),
+        .package(url: "https://github.com/onevcat/Kingfisher.git", from: "7.10.0")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -27,7 +28,8 @@ let package = Package(
             dependencies: [
                 "ZIPFoundation",
                 "SwiftSoup",
-                "AEXML"
+                "AEXML",
+                "Kingfisher"
             ]
         ),
         .testTarget(

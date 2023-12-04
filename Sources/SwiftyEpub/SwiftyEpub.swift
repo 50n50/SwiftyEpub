@@ -14,10 +14,25 @@ extension String {
     }
 }
 
+protocol LocalizedDescribable {
+    var localizedDescription: String { get }
+}
 
 public enum EpubError: Error {
     case invalidPath
     case bookNotAvailable
+}
+
+extension EpubError: LocalizedDescribable {
+    var localizedDescription: String {
+        switch self {
+            case .invalidPath:
+                return NSLocalizedString("The provided path is invalid.", comment: "")
+            case .bookNotAvailable:
+                return NSLocalizedString("The book you selected is not available.", comment: "")
+            // Provide localized descriptions for other cases
+        }
+    }
 }
 
 
@@ -282,12 +297,12 @@ public struct SwiftyEpub {
         }
     }
     
-    public func parseChapter(_ resource: EpubResource) throws -> [Tag] {
+    public func parseChapter(_ resource: EpubResource) throws -> [HTMLComponent] {
         guard let basePath = URL(string: resourcesBasePath) else { return [] }
         
         let htmlContent = try String(contentsOfFile: basePath.appendingPathComponent(resource.href).absoluteString.replacingOccurrences(of: "file://", with: ""), encoding: .utf8)
         
-        var list: [Tag] = []
+        var list: [HTMLComponent] = []
         
         do {
             let doc: Document = try SwiftSoup.parse(htmlContent)
@@ -352,8 +367,40 @@ public struct SwiftyEpub {
         completion(cssProperties)
     }
     
+    func splitInnerHTML(_ innerHTML: String) -> [String] {
+        var result = [String]()
+        
+        let pattern = #"<[^>]+>.*?<\/[^>]+>|<[^>]+>|[^<]+"#
+        
+        let regex = try! NSRegularExpression(pattern: pattern, options: [])
+        let matches = regex.matches(in: innerHTML, options: [], range: NSRange(location: 0, length: innerHTML.utf16.count))
+        
+        for match in matches {
+            if let range = Range(match.range, in: innerHTML) {
+                let substring = String(innerHTML[range])
+                result.append(substring)
+            }
+        }
+        
+        return result
+    }
+
+
+    
+    func convertToElement(_ htmlString: String) -> Element? {
+        do {
+            let doc: Document = try SwiftSoup.parse(htmlString)
+            return try doc.select("body > *").first()
+        } catch Exception.Error(let type, let message) {
+            print(type, message)
+        } catch {
+            print("Error parsing the HTML string")
+        }
+        return nil
+    }
+    
     // Helper function to parse an HTML tag with its children
-    func parseHTMLTag(_ element: Element, book: Book) throws -> Tag {
+    func parseHTMLTag(_ element: Element, book: Book) throws -> HTMLComponent {
         
         if element.tagName() == "h2" {
             var fontSize: Double = 22.0
@@ -380,9 +427,87 @@ public struct SwiftyEpub {
             
             let text = try element.text()
             
-            let h2Tag = Tag(type: .h2, value: text, fontSize: fontSize, margin: margin, align: align, children: [])
+            return .tag(.h2(text: text))
+        }
+        
+        if element.tagName() == "h3" {
+            var fontSize: Double = 20.0
+            var margin: Margin = Margin()
+            var align: Align = .center
             
-            return h2Tag
+            if !book.cssString.isEmpty {
+                parseCSSProperties(cssString: book.cssString, forSelector: try element.className()) { props in
+                    fontSize = props.fontSize
+                    margin = props.margin
+                    align = props.align
+                }
+            }
+            
+            let style = try element.attr("style")
+            
+            if !style.isEmpty {
+                parseCSSProperties(cssString: style, forSelector: try element.className()) { props in
+                    fontSize = props.fontSize
+                    margin = props.margin
+                    align = props.align
+                }
+            }
+            
+            let text = try element.text()
+            
+            return .tag(.h3(text: text))
+        }
+        
+        if element.tagName() == "div" {
+            
+            var contentList: [HTMLComponent] = []
+            
+            let children = element.children()
+            for child in children {
+                let el = try parseHTMLTag(child, book: self.book)
+                contentList.append(el)
+            }
+            
+            return .tag(.div(content: contentList, padding: nil))
+        }
+        
+        if element.tagName() == "ul" {
+            
+            var contentList: [HTMLComponent] = []
+            
+            let children = element.children()
+            for child in children {
+                let el = try parseHTMLTag(child, book: self.book)
+                contentList.append(el)
+            }
+            
+            return .tag(.ul(items: contentList))
+        }
+        
+        if element.tagName() == "ol" {
+            
+            var contentList: [HTMLComponent] = []
+            
+            let children = element.children()
+            for child in children {
+                let el = try parseHTMLTag(child, book: self.book)
+                contentList.append(el)
+            }
+            
+            return .tag(.ol(items: contentList))
+        }
+        
+        if element.tagName() == "fieldset" {
+            
+            var contentList: [HTMLComponent] = []
+            
+            let children = element.children()
+            for child in children {
+                let el = try parseHTMLTag(child, book: self.book)
+                contentList.append(el)
+            }
+            
+            return .tag(.fieldset(content: contentList))
         }
         
         if element.tagName() == "h4" {
@@ -403,27 +528,43 @@ public struct SwiftyEpub {
             str = str.trimmingCharacters(in: .whitespacesAndNewlines)
             str = str.replacingOccurrences(of: "<br/>", with: "\n").replacingOccurrences(of: "<em>", with: "_").replacingOccurrences(of: "</em>", with: "_")
 
-            let h4Tag = Tag(type: .h4, value: str, fontSize: fontSize, margin: margin, align: align, children: [])
-            return h4Tag
+            return .tag(.h4(text: str))
+        }
+        
+        if element.tagName() == "h1" {
+            var fontSize: Double = 14.0
+            var margin: Margin = Margin()
+            var align: Align = .leading
+            
+            if !book.cssString.isEmpty {
+                parseCSSProperties(cssString: book.cssString, forSelector: try element.className()) { props in
+                    fontSize = props.fontSize
+                    margin = props.margin
+                    align = props.align
+                }
+            }
+            
+            var str = try element.html()
+            
+            str = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            str = str.replacingOccurrences(of: "<br/>", with: "\n").replacingOccurrences(of: "<em>", with: "_").replacingOccurrences(of: "</em>", with: "_")
+
+            return .tag(.h1(text: str))
         }
         
         if element.tagName() == "li" {
-            //size += 15
-            let liTag = Tag(type: .li, value: try element.text(), children: [])
-            return liTag
+            return .tag(.li(text: try element.html()))
         }
         
         if element.tagName() == "a" {
-            //size += 15
-            let aTag = Tag(type: .a, value: try element.text(), children: [])
-            return aTag
+            return .tag(.a(text: try element.text(), url: ""))
         }
         
         if element.tagName() == "p" || element.tagName() == "span" {
             var str = try element.html()
             
             str = str.trimmingCharacters(in: .whitespacesAndNewlines)
-            str = str.replacingOccurrences(of: "<br/>", with: "\n").replacingOccurrences(of: "<em>", with: "_").replacingOccurrences(of: "</em>", with: "_")
+            str = str.replacingOccurrences(of: "<br/>", with: "\n").replacingOccurrences(of: "<em>", with: "_").replacingOccurrences(of: "</em>", with: "_").replacingOccurrences(of: "<i>", with: "_").replacingOccurrences(of: "</i>", with: "_")
             
             var fontSize: Double = 16.0
             var margin: Margin = Margin()
@@ -437,12 +578,24 @@ public struct SwiftyEpub {
                 }
             }
             
-            let pTag = Tag(type: element.tagName() == "span" ? .span : .p, value: str, fontSize: fontSize, margin: margin, align: align, children: [])
-            return pTag
+            let splitContent = splitInnerHTML(str)
+            
+            var contentList: [HTMLComponent] = []
+            
+            for sub in splitContent {
+                if let elem = convertToElement(sub) {
+                    let t = try parseHTMLTag(elem, book: self.book)
+                    contentList.append(t)
+                } else {
+                    contentList.append(HTMLComponent.text(sub))
+                }
+            }
+            return .tag(.p(content: contentList))
+//            return .tag(.p(content: [.text(str, .regular, fontSize)]))
         }
         
         if element.tagName() == "br" {
-            return Tag(type: .nl, value: "", children: [])
+            return .tag(.br)
         }
         
         if element.tagName() == "img" {
@@ -464,23 +617,26 @@ public struct SwiftyEpub {
                     print("Image couldn't be loaded.")
                 }
                 
-                let imgTag = Tag(type: .img, value: src, children: [])
-                return imgTag
+                return .tag(.img(url: imgPath.absoluteString))
             }
         }
         
-        return Tag(type: .unknown, value: "", children: [])
+        return .text("")
     }
     
     // Recursive function to parse HTML elements and their children
-    func parseHTMLRecursive(_ elements: Elements) throws -> [Tag] {
-        var tags: [Tag] = []
+    func parseHTMLRecursive(_ elements: Elements) throws -> [HTMLComponent] {
+        var tags: [HTMLComponent] = []
         
         for element in elements {
             var tag = try parseHTMLTag(element, book: book)
             let childrenElements = element.children()
             let childrenTags = try parseHTMLRecursive(childrenElements)
-            tag.children = childrenTags
+            if case var .tag(t) = tag {
+                if case var .p(content) = t {
+                    content += childrenTags
+                }
+            }
             tags.append(tag)
         }
         
