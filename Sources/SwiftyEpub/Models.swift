@@ -425,9 +425,9 @@ public struct MediaType: Equatable {
 public struct Page {
     public let title: String
     public let number: Int
-    public let data: [Tag]
+    public let data: [HTMLComponent]
     
-    public init(title: String, number: Int, data: [Tag]) {
+    public init(title: String, number: Int, data: [HTMLComponent]) {
         self.title = title
         self.number = number
         self.data = data

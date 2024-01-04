@@ -264,6 +264,25 @@ public struct SwiftyEpub {
             }
         }
         
+        if let coverHref = book.coverImage?.fullHref {
+            let imageData = try Data(contentsOf: URL(string: coverHref)!)
+            if let loadedImage = UIImage(data: imageData) {
+                if let data = loadedImage.jpegData(compressionQuality: 1.0) {
+                    let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                    let coversDirectory = documentsDirectory.appendingPathComponent("Covers")
+                    
+                    do {
+                        try FileManager.default.createDirectory(at: coversDirectory, withIntermediateDirectories: true, attributes: nil)
+                        
+                        let fileURL = coversDirectory.appendingPathComponent("\(book.name).jpg")
+                        try data.write(to: fileURL)
+                    } catch {
+                        print("Error saving image: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+        
         // Specific TOC for ePub 2 and 3
         // Get the first resource with the NCX mediatype
         if let tocResource = findByMediaType(MediaType.ncx, book.manifest) {
@@ -459,15 +478,18 @@ public struct SwiftyEpub {
         }
         
         if element.tagName() == "div" {
-            
             var contentList: [HTMLComponent] = []
+            let childNodes = element.childNodesCopy()
             
-            let children = element.children()
-            for child in children {
-                let el = try parseHTMLTag(child, book: self.book)
-                contentList.append(el)
+            for childNode in childNodes {
+                if let textNode = childNode as? TextNode {
+                    let text = textNode.text()
+                    contentList.append(.text(text))
+                } else if let elementNode = childNode as? Element {
+                    let element = try parseHTMLTag(elementNode, book: book)
+                    contentList.append(element)
+                }
             }
-            
             return .tag(.div(content: contentList, padding: nil))
         }
         
@@ -552,19 +574,35 @@ public struct SwiftyEpub {
             return .tag(.h1(text: str))
         }
         
+        if element.tagName() == "nav" || element.tagName() == "section" || element.tagName() == "figure" {
+            var contentList: [HTMLComponent] = []
+            
+            let children = element.children()
+            for child in children {
+                let el = try parseHTMLTag(child, book: self.book)
+                contentList.append(el)
+            }
+            
+            return .tag(.div(content: contentList, padding: nil))
+        }
+        
         if element.tagName() == "li" {
-            return .tag(.li(text: try element.html()))
+            if try element.html().contains("</a>") {
+                return .tag(.a(text: try element.text(), url: ""))
+            }
+            return .tag(.li(text: try element.text()))
         }
         
         if element.tagName() == "a" {
             return .tag(.a(text: try element.text(), url: ""))
         }
         
-        if element.tagName() == "p" || element.tagName() == "span" {
+        if element.tagName() == "p" {
             var str = try element.html()
             
+            return .tag(.p(content: [.text(str)]))
+            
             str = str.trimmingCharacters(in: .whitespacesAndNewlines)
-            str = str.replacingOccurrences(of: "<br/>", with: "\n").replacingOccurrences(of: "<em>", with: "_").replacingOccurrences(of: "</em>", with: "_").replacingOccurrences(of: "<i>", with: "_").replacingOccurrences(of: "</i>", with: "_")
             
             var fontSize: Double = 16.0
             var margin: Margin = Margin()
@@ -591,6 +629,39 @@ public struct SwiftyEpub {
                 }
             }
             return .tag(.p(content: contentList))
+//            return .tag(.p(content: [.text(str, .regular, fontSize)]))
+        }
+        
+        if element.tagName() == "span" {
+            var str = try element.html()
+            
+            str = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            var fontSize: Double = 16.0
+            var margin: Margin = Margin()
+            var align: Align = .leading
+            
+            if !book.cssString.isEmpty {
+                parseCSSProperties(cssString: book.cssString, forSelector: try element.className()) { props in
+                    fontSize = props.fontSize
+                    margin = props.margin
+                    align = props.align
+                }
+            }
+            
+            let splitContent = splitInnerHTML(str)
+            
+            var contentList: [HTMLComponent] = []
+            
+            for sub in splitContent {
+                if let elem = convertToElement(sub) {
+                    let t = try parseHTMLTag(elem, book: self.book)
+                    contentList.append(t)
+                } else {
+                    contentList.append(HTMLComponent.text(sub))
+                }
+            }
+            return .tag(.span(content: contentList, style: nil))
 //            return .tag(.p(content: [.text(str, .regular, fontSize)]))
         }
         
