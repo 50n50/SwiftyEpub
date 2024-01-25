@@ -7,6 +7,8 @@ import SwiftSoup
 import WebKit
 import UIKit
 import AEXML
+import SwiftUI
+import Kingfisher
 
 extension String {
     func stringByRemovingHTMLTags() -> String {
@@ -18,19 +20,16 @@ protocol LocalizedDescribable {
     var localizedDescription: String { get }
 }
 
-public enum EpubError: Error {
+public enum EpubError: String, Error {
     case invalidPath
     case bookNotAvailable
-}
-
-extension EpubError: LocalizedDescribable {
-    var localizedDescription: String {
+    
+    public var localizedDescription: String {
         switch self {
-            case .invalidPath:
-                return NSLocalizedString("The provided path is invalid.", comment: "")
-            case .bookNotAvailable:
-                return NSLocalizedString("The book you selected is not available.", comment: "")
-            // Provide localized descriptions for other cases
+        case .invalidPath:
+            "The path is invalid."
+        case .bookNotAvailable:
+            "The book is not available"
         }
     }
 }
@@ -50,9 +49,10 @@ public struct SwiftyEpub {
     
     var resourcesBasePath = ""
     
+    public static let shared = SwiftyEpub()
     
     public init() {}
-
+    
     // Function to extract and parse CSS properties
     func extractAndParseCSS(cssString: String, forSelector selector: String) -> [CSSProperty]? {
         let regexString = "\(selector)\\s*\\{([^\\}]*)\\}"
@@ -83,61 +83,6 @@ public struct SwiftyEpub {
         return nil
     }
     
-    func numberOfLines(for text: String, fontSize: Double, containerWidth: CGFloat) -> Int {
-        let font = UIFont.systemFont(ofSize: CGFloat(fontSize))
-        let textAttributes = [NSAttributedString.Key.font: font]
-        let attributedText = NSAttributedString(string: text, attributes: textAttributes)
-        
-        let textRect = attributedText.boundingRect(with: CGSize(width: containerWidth, height: CGFloat.greatestFiniteMagnitude), options: .usesLineFragmentOrigin, context: nil)
-        
-        let numberOfLines = Int(ceil(textRect.size.height / font.lineHeight))
-        
-        return numberOfLines
-    }
-    
-    
-    func countEmptyLines(in htmlString: String) -> Int {
-        let pattern = #"^\s*$"#
-        let regex = try! NSRegularExpression(pattern: pattern, options: .anchorsMatchLines)
-        let range = NSRange(htmlString.startIndex..<htmlString.endIndex, in: htmlString)
-        
-        let matches = regex.matches(in: htmlString, options: [], range: range)
-        return matches.count
-    }
-    
-    func calculateContentHeight(htmlString: String, cssString: String, completion: @escaping (CGFloat) -> Void) {
-        DispatchQueue.main.async {
-            let webView = WKWebView(frame: .zero)
-            webView.translatesAutoresizingMaskIntoConstraints = false
-
-            let htmlWithStyle = "<html><head><style>\(cssString)</style></head><body>\(htmlString)</body></html>"
-            webView.loadHTMLString(htmlWithStyle, baseURL: nil)
-            
-            webView.scrollView.isScrollEnabled = false
-            webView.scrollView.bounces = false
-
-            UIApplication.shared.windows.first { $0.isKeyWindow }?.addSubview(webView)
-
-            webView.evaluateJavaScript("document.readyState", completionHandler: { _, _ in
-                webView.evaluateJavaScript("document.body.scrollHeight", completionHandler: { result, error in
-                    if let height = result as? CGFloat {
-                        DispatchQueue.main.async {
-                            webView.removeFromSuperview()
-                            completion(height)
-                        }
-                    } else {
-                        DispatchQueue.main.async {
-                            print("Failed to get content height: \(error?.localizedDescription ?? "Unknown error")")
-                            webView.removeFromSuperview()
-                            completion(0)
-                        }
-                    }
-                })
-            })
-        }
-    }
-    
-    
     public mutating func readEpub(epubPath withEpubPath: String) throws -> Book {
         guard let epubUrl = URL(string: withEpubPath) else { throw EpubError.invalidPath }
         
@@ -148,9 +93,9 @@ public struct SwiftyEpub {
         guard let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else { throw EpubError.invalidPath }
         
         let basePath = documentsDirectory.appendingPathComponent("Epubs")
-
+        
         bookBasePath = basePath.appendingPathComponent(bookName)
-
+        
         guard fileManager.fileExists(atPath: withEpubPath.replacingOccurrences(of: "file://", with: "")) else {
             throw EpubError.bookNotAvailable
         }
@@ -176,7 +121,7 @@ public struct SwiftyEpub {
         
         let pattern = "full-path=\"([^\"]*)\""
         let regex = try! NSRegularExpression(pattern: pattern, options: [])
-
+        
         if let match = regex.firstMatch(in: containerString, options: [], range: NSRange(location: 0, length: containerString.utf16.count)) {
             let range = match.range(at: 1)
             if let swiftRange = Range(range, in: containerString) {
@@ -206,7 +151,7 @@ public struct SwiftyEpub {
         // Base OPF info
         if let package = xmlDoc.children.first {
             identifier = package.attributes["unique-identifier"]
-
+            
             if let version = package.attributes["version"] {
                 book.version = Double(version) ?? 3.0
             }
@@ -223,7 +168,7 @@ public struct SwiftyEpub {
             resource.fullHref = basePath.appendingPathComponent(resource.href).absoluteString.removingPercentEncoding ?? ""
             resource.mediaType = MediaType.by(name: $0.attributes["media-type"] ?? "", fileName: resource.href)
             
-
+            
             book.manifest.append(resource)
         }
         
@@ -233,6 +178,21 @@ public struct SwiftyEpub {
         // Read the cover image
         let coverImageId = book.metadata?.find(byName: "cover")?.content
         if let coverImageId = coverImageId, let coverResource = findById(coverImageId, book.manifest) {
+            book.coverImage = coverResource
+            
+            // save the cover for easy access
+            let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+            
+            if documentsDirectory != nil {
+                let basePath = documentsDirectory!.appendingPathComponent("Epubs")
+                
+                if let atUrl = URL(string: coverResource.fullHref) {
+                    if !fileManager.fileExists(atPath: basePath.appendingPathComponent(book.name).appendingPathComponent("cover.jpg").absoluteString.replacingOccurrences(of: "file://", with: "")) {
+                        try fileManager.copyItem(at: atUrl, to: basePath.appendingPathComponent(book.name).appendingPathComponent("cover.jpg"))
+                    }
+                }
+            }
+        } else if let coverResource = findByIdWithMediaType("cover", book.manifest, "image/") {
             book.coverImage = coverResource
             
             // save the cover for easy access
@@ -309,12 +269,427 @@ public struct SwiftyEpub {
         
         if let cssPath {
             let cssURL = opfUrl.deletingLastPathComponent().appendingPathComponent(cssPath.href)
-           
+            
             print(cssURL.absoluteString.replacingOccurrences(of: "file://", with: ""))
             
-            book.cssString = try String(contentsOfFile: cssURL.absoluteString.replacingOccurrences(of: "file://", with: ""), encoding: .utf8)
+            book.cssString = try String(contentsOfFile: cssURL.path.replacingOccurrences(of: "file://", with: ""), encoding: .utf8)
         }
     }
+    
+    
+    func resolveFilePath(currentPath: String, relativePath: String) -> String? {
+        let currentURL = URL(fileURLWithPath: currentPath)
+        let relativeURL = URL(fileURLWithPath: relativePath, relativeTo: currentURL)
+        
+        return relativeURL.path
+    }
+    
+    public func emToPixels(_ value: String) -> Double? {
+        let v = value.lowercased().replacingOccurrences(of: "em", with: "")
+        
+        return 32 * ( Double(v) ?? 1.0 )
+    }
+    
+    public func parseCss(css: String) -> [String: [String: String]] {
+        var result: [String: [String: String]] = [:]
+        
+        // Split the CSS string by semicolons to get individual rules
+        let rules = css.components(separatedBy: ";")
+        
+        var selectors: String = ""
+        var properties: [String: String] = [:]
+        
+        for rule in rules {
+            // Split each rule by the opening curly brace to separate selector from properties
+            let components = rule.components(separatedBy: "{")
+            
+            if components.count == 2 {
+                selectors = components[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                let propertiesString = components[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                // Split properties by semicolon to extract individual property-value pairs
+                let propertyPairs = propertiesString.components(separatedBy: ";")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                
+                for propertyPair in propertyPairs {
+                    let propertyComponents = propertyPair.components(separatedBy: ":")
+                    
+                    if propertyComponents.count == 2 {
+                        let propertyName = propertyComponents[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                        let propertyValue = propertyComponents[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                        
+                        properties[propertyName] = propertyValue
+                    }
+                }
+            } else {
+                let propertiesString = components.joined(separator: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                let propertyPairs = propertiesString.components(separatedBy: ";")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                
+                for propertyPair in propertyPairs {
+                    let propertyComponents = propertyPair.components(separatedBy: ":")
+                    
+                    if propertyComponents.count == 2 {
+                        let propertyName = propertyComponents[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                        let propertyValue = propertyComponents[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                        
+                        properties[propertyName] = propertyValue
+                    }
+                }
+            }
+        }
+        
+        // Split selectors by comma to handle multiple selectors
+        let selectorList = selectors.components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        
+        // Add properties to each selector
+        for selector in selectorList {
+            if !selector.isEmpty {
+                result[selector] = properties
+            }
+        }
+        
+        return result
+    }
+    
+    func readDefaultStylesFile() -> String? {
+        // Get the main bundle of your Swift package
+        let bundle = Bundle.module
+        
+        // Specify the filename and extension of your CSS file
+        guard let filePath = bundle.path(forResource: "defaultStyles", ofType: "css") else {
+            // File not found or unable to retrieve its path
+            return nil
+        }
+        
+        do {
+            // Read the file contents as a string
+            let contents = try String(contentsOfFile: filePath, encoding: .utf8)
+            return contents
+        } catch {
+            // Error reading the file
+            print("Error reading file:", error)
+            return nil
+        }
+    }
+    
+    var currentHrefPath: String = ""
+    
+    public mutating func parseChapterNEW(_ resource: EpubResource) throws -> [Node] {
+        guard let basePath = URL(string: resourcesBasePath) else { return [] }
+        
+        let htmlContent = try String(contentsOfFile: basePath.appendingPathComponent(resource.href).absoluteString.replacingOccurrences(of: "file://", with: ""), encoding: .utf8)
+        
+        var nodes: [Node] = []
+        
+        currentHrefPath = basePath.appendingPathComponent(resource.href).absoluteString.replacingOccurrences(of: "file://", with: "")
+        
+        var css: [String: [String: String]] = [:]
+        if let cssString = readDefaultStylesFile() {
+            css = parseCss(css: cssString)
+            print(css)
+        }
+        
+        do {
+            let doc: Document = try SwiftSoup.parse(htmlContent)
+            if let body = try doc.body()?.select("body").first() {
+                let children = body.childNodesCopy()
+                
+                nodes = parseElements(children, css: css)
+                //nodes = try parseHTMLRecursive(elements)
+            }
+        } catch {
+            print("Error parsing HTML: \(error)")
+        }
+        
+        return nodes
+    }
+    
+    public func evaluateCss(of property: String, with value: String) -> Double {
+        switch property {
+            // margin
+        case "margin-block-end":
+            return emToPixels(value) ?? 0.0
+        case _:
+            return 0.0
+        }
+    }
+    
+    public func createNodeView(_ segment: [Node], combine: Bool = true) -> AnyView {
+        
+        var marginBottom: Double = 0.0
+        
+        let _ = segment.compactMap { node in
+            if let textNode = node as? TextNode {
+                for type in textNode.types {
+                    if let values = textNode.css[type.rawValue] {
+                        for pair in values {
+                            marginBottom = evaluateCss(of: pair.key, with: pair.value)
+                        }
+                    }
+                }
+            }
+        }
+        
+        let fonts: [Font] = segment.compactMap { node -> Font? in
+            if let textNode = node as? TextNode {
+                return textNode.types.first?.font
+            }
+            return nil
+        }
+        let attributedString = NSMutableAttributedString()
+        var italicRanges: [NSRange] = []
+        var anchorRanges: [NSRange] = []
+        
+        var hasLi = false
+        
+        if !combine {
+            return AnyView(
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(0..<segment.count, id: \.self) { index in
+                        let node = segment[index]
+                        
+                        switch node {
+                        case is TextNode:
+                            let text = (node as! TextNode).text
+                            if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                                Text(text)
+                                    .font(fonts.first ?? .charterFont(weight: .regular, size: 16))
+                                    .lineSpacing(0.4)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 6)
+                                    .padding(.bottom, marginBottom)
+                            }
+                        case is ImageNode:
+                            let imageNode = node as! ImageNode
+                            KFImage(URL(string: imageNode.src))
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                        case is FieldsetNode:
+                            let fieldSetNode = node as! FieldsetNode
+                            VStack(alignment: .leading, spacing: 0) {
+                                createNodeView(fieldSetNode.nodes, combine: false)
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay {
+                                Rectangle()
+                                    .stroke(.white, lineWidth: 0.7)
+                            }
+                            .padding(.bottom, marginBottom)
+                        case _:
+                            EmptyView()
+                        }
+                        
+                    }
+                }
+            )
+        }
+        
+        for node in segment {
+            if let textNode = node as? TextNode {
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: textNode.types.first?.font as Any,
+                    // Add other attributes like color, etc., if needed
+                ]
+                
+                let substring = NSAttributedString(string: textNode.text.softHyphenated(), attributes: attributes)
+                attributedString.append(substring)
+                
+                if node is AnchorNode {
+                    let range = NSRange(location: attributedString.length - substring.length, length: substring.length)
+                    anchorRanges.append(range)
+                }
+                
+                if textNode.types.contains(.italic) {
+                    let range = NSRange(location: attributedString.length - substring.length, length: substring.length)
+                    italicRanges.append(range)
+                }
+                
+                if textNode.types.contains(.li) {
+                    hasLi = true
+                }
+                
+            } else if let fieldSetNode = node as? FieldsetNode {
+                return AnyView(
+                    VStack(alignment: .leading, spacing: 0) {
+                        createNodeView(fieldSetNode.nodes, combine: false)
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay {
+                        Rectangle()
+                            .stroke(.white, lineWidth: 0.7)
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.bottom, marginBottom)
+                )
+            } else if let imageNode = node as? ImageNode {
+                return AnyView(
+                    KFImage(URL(string: imageNode.src))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                )
+            }
+        }
+        
+        for range in italicRanges {
+            attributedString.addAttribute(.font, value: UIFont.italicSystemFont(ofSize: 16), range: range)
+        }
+        
+        for range in anchorRanges {
+            attributedString.addAttribute(.foregroundColor, value: UIColor.systemBlue, range: range)
+        }
+        
+        let text = AttributedString(attributedString)
+        
+        if hasLi {
+            return AnyView(
+                HStack(alignment: .top) {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 6)
+                        .padding(.top, 6)
+                    
+                    Text(text)
+                        .font(fonts.first)
+                }
+                .padding(.leading, 12)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+                .padding(.bottom, marginBottom)
+            )
+        }
+        
+        return AnyView(
+            Text(text)
+                .font(fonts.first ?? .charterFont(weight: .regular, size: 16))
+                .lineSpacing(0.4)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+                .padding(.bottom, marginBottom)
+        )
+    }
+    
+    private func parseElements(_ nodes: Array<SwiftSoup.Node>, types: [TextType] = [], css: [String: [String: String]] = [:]) -> [Node] {
+        var chapterElements: [Node] = []
+        
+        var chapterViews: [any View] = []
+        
+        for child in nodes {
+            switch child {
+            case is SwiftSoup.TextNode:
+                let text = (child as! SwiftSoup.TextNode).text() // .trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty {
+                    chapterElements.append(TextNode(text: text, types: types, css: css))
+                }
+                break
+            case is SwiftSoup.Element:
+                let childElement = child as! SwiftSoup.Element
+                let name = childElement.tagName()
+                
+                var elements: [Node] = []
+                if !child.getChildNodes().isEmpty {
+                    elements = parseElements(child.getChildNodes(), types: [], css: css)
+                    
+                    /*
+                    var textTypes: [TextType] = types
+                    switch name {
+                    case "h1":
+                        textTypes.append(.h1)
+                    case "h2":
+                        textTypes.append(.h2)
+                    case "h3":
+                        textTypes.append(.h3)
+                    case "h4":
+                        textTypes.append(.h4)
+                    case "h5":
+                        textTypes.append(.h5)
+                    case "h6":
+                        textTypes.append(.h6)
+                    case "i":
+                        textTypes.append(.italic)
+                    case "li":
+                        textTypes.append(.li)
+                    case _:
+                        break
+                    }
+                    
+                    if name == "fieldset" {
+                        chapterElements.append(FieldsetNode(nodes: elements, css: css))
+                    } else if name == "a" {
+                        let node = (child as! SwiftSoup.Element)
+                        chapterElements.append(
+                            AnchorNode(href: (try? child.attr("href")) ?? "", text: (try? node.text()) ?? "", types: textTypes)
+                        )
+                    } else {
+                        chapterElements.append(contentsOf: elements)
+                    }
+                    */
+                }
+                
+                
+                switch name {
+                case "fieldset":
+                    chapterElements.append(
+                        FieldsetNode(nodes: elements, css: css)
+                    )
+                case "div", "p":
+                    chapterElements.append(
+                        BlockNode(children: elements, css: css)
+                    )
+                case "li":
+                    chapterElements.append(
+                        TextNode(text: "\\u2022 \(String(describing: try? childElement.text()))", types: [], css: css)
+                    )
+                case "h1", "h2", "h3", "h4", "h5", "h6", "span":
+                    chapterElements.append(
+                        ParentNode(children: elements, css: css)
+                    )
+                case "img", "image":
+                    let relativeSrc = (try? child.attr("src")) ?? (try? child.attr("href")) ?? ""
+                    
+                    chapterElements.append(
+                        ImageNode(src: "file://" + (resolveFilePath(currentPath: currentHrefPath, relativePath: relativeSrc) ?? ""), css: css)
+                    )
+                    break
+                case "br":
+                    chapterElements.append(
+                        TextNode(text: "\n", types: types, css: css)
+                    )
+                case "a":
+                    let node = (child as? SwiftSoup.Element)
+                    if let node {
+                        chapterElements.append(
+                            AnchorNode(href: (try? child.attr("href")) ?? "", text: (try? node.text()) ?? "")
+                        )
+                    }
+                case _:
+                    break
+                }
+                break
+            case _:
+                break
+            }
+        }
+        
+        return chapterElements
+    }
+    
+    
     
     public func parseChapter(_ resource: EpubResource) throws -> [HTMLComponent] {
         guard let basePath = URL(string: resourcesBasePath) else { return [] }
@@ -403,8 +778,8 @@ public struct SwiftyEpub {
         
         return result
     }
-
-
+    
+    
     
     func convertToElement(_ htmlString: String) -> Element? {
         do {
@@ -483,7 +858,7 @@ public struct SwiftyEpub {
             
             for childNode in childNodes {
                 if let textNode = childNode as? TextNode {
-                    let text = textNode.text()
+                    let text = textNode.text
                     contentList.append(.text(text))
                 } else if let elementNode = childNode as? Element {
                     let element = try parseHTMLTag(elementNode, book: book)
@@ -549,7 +924,7 @@ public struct SwiftyEpub {
             
             str = str.trimmingCharacters(in: .whitespacesAndNewlines)
             str = str.replacingOccurrences(of: "<br/>", with: "\n").replacingOccurrences(of: "<em>", with: "_").replacingOccurrences(of: "</em>", with: "_")
-
+            
             return .tag(.h4(text: str))
         }
         
@@ -570,7 +945,7 @@ public struct SwiftyEpub {
             
             str = str.trimmingCharacters(in: .whitespacesAndNewlines)
             str = str.replacingOccurrences(of: "<br/>", with: "\n").replacingOccurrences(of: "<em>", with: "_").replacingOccurrences(of: "</em>", with: "_")
-
+            
             return .tag(.h1(text: str))
         }
         
@@ -629,7 +1004,7 @@ public struct SwiftyEpub {
                 }
             }
             return .tag(.p(content: contentList))
-//            return .tag(.p(content: [.text(str, .regular, fontSize)]))
+            //            return .tag(.p(content: [.text(str, .regular, fontSize)]))
         }
         
         if element.tagName() == "span" {
@@ -662,7 +1037,7 @@ public struct SwiftyEpub {
                 }
             }
             return .tag(.span(content: contentList, style: nil))
-//            return .tag(.p(content: [.text(str, .regular, fontSize)]))
+            //            return .tag(.p(content: [.text(str, .regular, fontSize)]))
         }
         
         if element.tagName() == "br" {
@@ -720,15 +1095,15 @@ public struct SwiftyEpub {
     /// - Returns: Spine object
     fileprivate func readSpine(_ tags: [AEXMLElement]) -> Spine {
         var spine = Spine()
-
+        
         for tag in tags {
             guard let idref = tag.attributes["idref"] else { continue }
             var linear = true
-
+            
             if tag.attributes["linear"] != nil {
                 linear = tag.attributes["linear"] == "yes" ? true : false
             }
-
+            
             if containsById(idref,  book.manifest) {
                 guard let resource = findById(idref, book.manifest) else { continue }
                 spine.spineReferences.append(SpineReference(resource: resource, linear: linear))
@@ -746,7 +1121,7 @@ public struct SwiftyEpub {
         guard let tocResource = book.tocResource else { return tableOfContent }
         guard let basePath = URL(string: resourcesBasePath) else { return tableOfContent }
         let tocPath = basePath.appendingPathComponent(tocResource.href)
-
+        
         do {
             if tocResource.mediaType == MediaType.ncx {
                 let ncxData = try Data(contentsOf: tocPath, options: .alwaysMapped)
@@ -757,7 +1132,7 @@ public struct SwiftyEpub {
             } else {
                 let tocData = try Data(contentsOf: tocPath, options: .alwaysMapped)
                 let xmlDoc = try AEXMLDocument(xml: tocData)
-
+                
                 if let nav = xmlDoc.root["body"]["nav"].first, let itemsList = nav["ol"]["li"].all {
                     tocItems = itemsList
                 } else if let nav = findNavTag(xmlDoc.root["body"]), let itemsList = nav["ol"]["li"].all {
@@ -767,14 +1142,14 @@ public struct SwiftyEpub {
         } catch {
             print("Cannot find Table of Contents.")
         }
-
+        
         guard let items = tocItems else { return tableOfContent }
-
+        
         for item in items {
             guard let ref = readTOCReference(item) else { continue }
             tableOfContent.append(ref)
         }
-
+        
         return tableOfContent
     }
     
@@ -799,59 +1174,59 @@ public struct SwiftyEpub {
     /// - Returns: Metadata object
     fileprivate func readMetadata(_ tags: [AEXMLElement]) -> Metadata {
         var metadata = Metadata()
-
+        
         for tag in tags {
             if tag.name == "dc:title" {
                 metadata.titles.append(tag.value ?? "")
             }
-
+            
             if tag.name == "dc:identifier" {
                 let identifier = Identifier(id: tag.attributes["id"], scheme: tag.attributes["opf:scheme"], value: tag.value)
                 metadata.identifiers.append(identifier)
             }
-
+            
             if tag.name == "dc:language" {
                 let language = tag.value ?? metadata.language
                 metadata.language = language != "en" ? language : metadata.language
             }
-
+            
             if tag.name == "dc:creator" {
                 metadata.creators.append(Author(name: tag.value ?? "", role: tag.attributes["opf:role"] ?? "", fileAs: tag.attributes["opf:file-as"] ?? ""))
             }
-
+            
             if tag.name == "dc:contributor" {
                 metadata.creators.append(Author(name: tag.value ?? "", role: tag.attributes["opf:role"] ?? "", fileAs: tag.attributes["opf:file-as"] ?? ""))
             }
-
+            
             if tag.name == "dc:publisher" {
                 metadata.publishers.append(tag.value ?? "")
             }
-
+            
             if tag.name == "dc:description" {
                 metadata.descriptions.append(tag.value ?? "")
             }
-
+            
             if tag.name == "dc:subject" {
                 metadata.subjects.append(tag.value ?? "")
             }
-
+            
             if tag.name == "dc:rights" {
                 metadata.rights.append(tag.value ?? "")
             }
-
+            
             if tag.name == "dc:date" {
                 metadata.dates.append(EventDate(date: tag.value ?? "", event: tag.attributes["opf:event"] ?? ""))
             }
-
+            
             if tag.name == "meta" {
                 if tag.attributes["name"] != nil {
                     metadata.metaAttributes.append(Meta(name: tag.attributes["name"], content: tag.attributes["content"]))
                 }
-
+                
                 if tag.attributes["property"] != nil && tag.attributes["id"] != nil {
                     metadata.metaAttributes.append(Meta(id: tag.attributes["id"], property: tag.attributes["property"], value: tag.value))
                 }
-
+                
                 if tag.attributes["property"] != nil {
                     metadata.metaAttributes.append(Meta(property: tag.attributes["property"], value: tag.value, refines: tag.attributes["refines"]))
                 }
@@ -865,7 +1240,7 @@ public struct SwiftyEpub {
      */
     fileprivate func findById(_ id: String?, _ resources: [EpubResource]) -> EpubResource? {
         guard let id = id else { return nil }
-
+        
         for resource in resources {
             if resource.id == id {
                 return resource
@@ -874,9 +1249,24 @@ public struct SwiftyEpub {
         return nil
     }
     
+    /**
+     Gets the resource with the given href with a media type.
+     */
+    fileprivate func findByIdWithMediaType(_ id: String?, _ resources: [EpubResource], _ mediaType: String?) -> EpubResource? {
+        guard let id = id else { return nil }
+        guard let mediaType = mediaType else { return nil }
+        
+        for resource in resources {
+            if resource.id.contains(id) && resource.mediaType.name.contains(mediaType) {
+                return resource
+            }
+        }
+        return nil
+    }
+    
     fileprivate func findByProperty(_ properties: String, _ resources: [EpubResource]) -> EpubResource? {
         for resource in resources {
-            if resource.properties == properties {
+            if resource.properties.contains(properties) {
                 return resource
             }
         }
@@ -903,7 +1293,7 @@ public struct SwiftyEpub {
     
     fileprivate func findByHref(_ href: String, _ resources: [EpubResource]) -> EpubResource? {
         guard !href.isEmpty else { return nil }
-
+        
         // This clean is neede because may the toc.ncx is not located in the root directory
         let cleanHref = href.replacingOccurrences(of: "../", with: "")
         return resources.first { res in
@@ -913,7 +1303,7 @@ public struct SwiftyEpub {
     
     fileprivate func containsById(_ id: String?, _ resources: [EpubResource]) -> Bool {
         guard let id = id else { return false }
-
+        
         for resource in resources {
             if resource.id == id {
                 return true
@@ -924,20 +1314,20 @@ public struct SwiftyEpub {
     
     fileprivate func readTOCReference(_ navpointElement: AEXMLElement) -> TocReference? {
         var label = ""
-
+        
         if book.tocResource?.mediaType == MediaType.ncx {
             if let labelText = navpointElement["navLabel"]["text"].value {
                 label = labelText
             }
-
+            
             guard let reference = navpointElement["content"].attributes["src"] else { return nil }
             let hrefSplit = reference.split {$0 == "#"}.map { String($0) }
             let fragmentID = hrefSplit.count > 1 ? hrefSplit[1] : ""
             let href = hrefSplit[0]
-
+            
             let resource = findByHref(href, book.manifest)
             var toc = TocReference(title: label, resource: resource, fragmentID: fragmentID, children: [])
-
+            
             // Recursively find child
             if let navPoints = navpointElement["navPoint"].all {
                 for navPoint in navPoints {
@@ -950,15 +1340,15 @@ public struct SwiftyEpub {
             if let labelText = navpointElement["a"].value {
                 label = labelText
             }
-
+            
             guard let reference = navpointElement["a"].attributes["href"] else { return nil }
             let hrefSplit = reference.split {$0 == "#"}.map { String($0) }
             let fragmentID = hrefSplit.count > 1 ? hrefSplit[1] : ""
             let href = hrefSplit[0]
-
+            
             let resource = findByHref(href, book.manifest)
             var toc = TocReference(title: label, resource: resource, fragmentID: fragmentID, children: [])
-
+            
             // Recursively find child
             if let navPoints = navpointElement["ol"]["li"].all {
                 for navPoint in navPoints {

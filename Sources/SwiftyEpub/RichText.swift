@@ -122,24 +122,24 @@ struct UniversalLabelView: UIViewRepresentable {
     }
 }
 
-struct RichText: View {
+public struct RichText: View {
     let text: String
     let fontSize: Double
     @State private var height: CGFloat = .zero
     var completionHandler: ((String?, String?, Bool) -> Void)? // Optional completion handler
         
-    init(text: String, fontSize: Double = 16, completionHandler: ((String?, String?, Bool) -> Void)? = nil) {
+    public init(text: String, fontSize: Double = 16, completionHandler: ((String?, String?, Bool) -> Void)? = nil) {
         self.text = text
         self.fontSize = fontSize
         self.completionHandler = completionHandler
     }
     
-    init(text: String, fontSize: Double = 16) {
+    public init(text: String, fontSize: Double = 16) {
         self.text = text
         self.fontSize = fontSize
     }
     
-    var body: some View {
+    public var body: some View {
         UniversalLabelView(html: text, dynamicHeight: $height) { url, title in
             completionHandler?(url, title, true)
         }

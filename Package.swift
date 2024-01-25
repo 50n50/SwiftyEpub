@@ -18,7 +18,8 @@ let package = Package(
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", .upToNextMajor(from: "0.9.0")),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
         .package(url: "https://github.com/tadija/AEXML.git", from: "4.6.1"),
-        .package(url: "https://github.com/onevcat/Kingfisher.git", from: "7.10.0")
+        .package(url: "https://github.com/onevcat/Kingfisher.git", from: "7.10.0"),
+        .package(url: "https://github.com/krzysztofzablocki/Inject.git", from: "1.0.5"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -29,7 +30,12 @@ let package = Package(
                 "ZIPFoundation",
                 "SwiftSoup",
                 "AEXML",
-                "Kingfisher"
+                "Kingfisher",
+                "Inject"
+            ],
+            resources: [
+                .process("HTMLRendering/defaultStyles.css"),
+                .process("HTMLRendering/image_213.jpg")
             ]
         ),
         .testTarget(
