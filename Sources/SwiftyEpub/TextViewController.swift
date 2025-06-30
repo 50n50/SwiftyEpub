@@ -24,6 +24,3 @@ class TextViewController: UIViewController {
     }
 }
 
-#Preview {
-    TextViewController()
-}
