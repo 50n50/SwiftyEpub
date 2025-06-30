@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Kingfisher
 
 struct MarkdownTextView: UIViewRepresentable {
     let attributedText: NSAttributedString
@@ -159,41 +158,6 @@ struct RichTextWrapper: View {
     @State var title: String = ""
     
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(spacing: 12) {
-                    KFImage(URL(string: "https://media.discordapp.net/attachments/1110373752476270692/1181262048458444910/titlepage800.png"))
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .padding(.top, 80)
-                    RichText(text: text2, fontSize: 22)
-                    RichText(text: "「There are three ways to survive in a ruined world. I have forgotten some of them now. However, one thing is certain: you who are currently reading these words will survive.")
-                    RichText(text: text) { link, title, open in
-                        href = link ?? "Nothing"
-                        withAnimation(.spring(response: 0.3)) {
-                            showSheet = open
-                        }
-                        
-                        self.title = title ?? ""
-                    }
-                }
-                .padding(.horizontal, 20)
-            }
-            .frame(maxWidth: proxy.size.width > 600 ? proxy.size.width / 2 : .infinity, maxHeight: .infinity)
-            .ignoresSafeArea()
-        }
-        .overlay {
-            ZStack(alignment: .bottom) {
-                if showSheet {
-                    Color.black.opacity(0.3)
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                showSheet = false
-                            }
-                        }
-                        .animation(.easeInOut, value: showSheet)
-                        .transition(.opacity)
-                }
                 
                 if showSheet {
                     VStack(alignment: .leading) {
@@ -236,9 +200,6 @@ struct RichTextWrapper: View {
                     .transition(.move(edge: .bottom))
                 }
             }
-            .ignoresSafeArea()
-        }
-    }
 }
 
 struct TestText: View {

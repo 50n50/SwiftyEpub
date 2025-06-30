@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Kingfisher
 
 public struct Padding {
     public let top: Double
@@ -214,12 +213,6 @@ public struct HTMLTextView: View {
                     .frame(height: 16)
                     .padding(.bottom, 8)
                     .padding(.top, 8)
-            )
-        case .img(let url):
-            return AnyView(
-                KFImage(URL(string: url))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
             )
         case .li(let text):
             return AnyView(
